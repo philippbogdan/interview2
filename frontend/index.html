@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scenarios</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+            background: #fff;
+            color: #000;
+            font-size: 13px;
+            padding: 48px;
+            min-height: 100vh;
+        }
+
+        .samples {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .sample {
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            background: #fff;
+            font: inherit;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .sample:hover { border-color: #000; }
+        .sample.active { background: #000; color: #fff; border-color: #000; }
+
+        .boxes {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 48px;
+            margin-bottom: 32px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #000;
+            padding: 16px;
+            font: inherit;
+            resize: none;
+            background: #fff;
+        }
+
+        textarea:focus { outline: none; }
+
+        .output {
+            border: 1px solid #000;
+            height: 500px;
+            overflow-y: auto;
+            padding: 16px;
+            background: #fafafa;
+        }
+
+        .scenario {
+            margin-bottom: 32px;
+            padding-bottom: 32px;
+            border-bottom: 1px solid #ddd;
+        }
+        .scenario:last-child { margin-bottom: 0; border-bottom: none; }
+        .scenario pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .scenario-header {
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .scenario-error {
+            color: #c00;
+            font-size: 11px;
+            margin-top: 8px;
+        }
+
+        .meta {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 24px;
+            font-size: 11px;
+            opacity: 0.6;
+        }
+
+        .meta span { display: flex; gap: 6px; }
+        .meta strong { opacity: 1; }
+
+        .variables {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 32px;
+            min-height: 24px;
+        }
+
+        .var {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .var-name {
+            opacity: 0.5;
+            font-size: 11px;
+        }
+
+        .var-category {
+            font-size: 9px;
+            opacity: 0.3;
+            margin-left: 4px;
+        }
+
+        .states { display: flex; gap: 3px; }
+
+        .state {
+            padding: 2px 6px;
+            border: 1px solid #ddd;
+            font-size: 10px;
+            background: #fff;
+        }
+
+        .state.edge { border-style: dashed; }
+
+        .state.on {
+            color: #fff;
+            border-color: transparent;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        button {
+            font: inherit;
+            padding: 8px 24px;
+            background: #000;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover { background: #333; }
+        button:disabled { background: #ccc; cursor: default; }
+
+        .clear {
+            background: #fff;
+            color: #000;
+            border: 1px solid #ccc;
+        }
+
+        .clear:hover { border-color: #000; }
+
+        .count {
+            font-size: 11px;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="samples" id="samples"></div>
+
+    <div class="boxes">
+        <textarea id="input" placeholder="paste config"></textarea>
+        <div class="output" id="output"></div>
+    </div>
+
+    <div class="meta" id="meta"></div>
+
+    <div class="variables" id="variables"></div>
+
+    <div class="actions">
+        <button id="btn">generate</button>
+        <button class="clear" id="clear">clear</button>
+        <span class="count" id="count"></span>
+    </div>
+
+    <script>
+        const API = 'http://localhost:8000';
+
+        // Sample inputs
+        const SAMPLES = {
+            'clinic': {
+                agentConfig: {
+                    actions: ["find_patient_info", "dial_human_agent"],
+                    initialState: {
+                        name: "INFORMATION_COLLECTION",
+                        prompt: "You are an AI receptionist for a clinic. Your goal is to gather patient information, such as contact details and insurance, or look up existing patient records. If the patient needs to schedule an appointment, transition to SCHEDULING_APPOINTMENT. If the call involves a medical history discussion, transition to HPI_COLLECTION. For all other inquiries, connect to a human agent. Always ask for clarifications, ensure accuracy, and thank the patient before ending the call.",
+                        modelName: "gpt-4o",
+                        transitions: ["SCHEDULING_APPOINTMENT", "HPI_COLLECTION"],
+                        initialMessage: "Hello, thank you for calling the clinic. I'm your AI receptionist. Are you a new or returning patient?"
+                    },
+                    additionalStates: [
+                        {
+                            name: "SCHEDULING_APPOINTMENT",
+                            prompt: "You are scheduling an appointment for a clinic. Ask the patient their appointment type and offer available slots (e.g., Tuesdays 4-5 PM, Wednesdays 2-3 PM, Fridays 9-10 AM). Confirm or reschedule as needed. Always thank the patient and end the call politely.",
+                            modelName: "gpt-4o-mini",
+                            transitions: []
+                        },
+                        {
+                            name: "HPI_COLLECTION",
+                            prompt: "You are collecting medical history for a patient's upcoming doctor visit. Gather information about their symptoms, medical history, medications, and allergies. Ask clear, step-by-step questions to prepare the doctor for the visit. If unsure about anything, connect to a human agent and thank the patient before ending the call.",
+                            modelName: "gpt-4o-mini",
+                            transitions: []
+                        }
+                    ]
+                }
+            },
+            'drive-thru': {
+                description: `You are a friendly, efficient, and professional virtual assistant helping customers at a drive-through. Your role is to:
+1. Greet the Customer: Start with a polite and welcoming greeting.
+2. Take Orders Efficiently: Listen carefully, confirm each item, and suggest popular items or upsells if appropriate.
+3. Handle Customizations: Support any special requests or dietary restrictions (e.g., "no pickles" or "gluten-free buns").
+4. Confirm and Summarize the Order: Repeat the full order for confirmation and provide the total cost.
+5. Handle Common Issues: Respond calmly to complaints, clarify menu items, or assist with payment concerns.
+6. End the Interaction Positively: Thank the customer and provide clear instructions on what to do next.`,
+                actions: ["take_order", "modify_order", "process_payment", "call_manager"],
+                entities: ["order_items", "customizations", "payment_method", "customer_name"]
+            },
+            'customer-service': {
+                description: "You are a customer service agent for an e-commerce platform. Help customers with order tracking, returns, refunds, and general inquiries. Escalate to human agents for complex issues.",
+                actions: ["lookup_order", "initiate_return", "process_refund", "escalate_to_human"],
+                entities: ["order_id", "customer_email", "product_name", "issue_type"],
+                states: ["GREETING", "ORDER_LOOKUP", "RETURN_PROCESS", "ESCALATION"],
+                transitions: [
+                    { from: "GREETING", to: "ORDER_LOOKUP", condition: "customer_provides_order_id" },
+                    { from: "ORDER_LOOKUP", to: "RETURN_PROCESS", condition: "customer_requests_return" },
+                    { from: "any", to: "ESCALATION", condition: "issue_too_complex" }
+                ]
+            },
+            'bank-support': {
+                description: "You are a voice agent for a bank's customer support line. Help customers check account balances, report lost cards, transfer funds, and answer questions about their accounts. Always verify customer identity before accessing account information.",
+                actions: ["verify_identity", "check_balance", "report_lost_card", "transfer_funds", "connect_to_banker"],
+                entities: ["account_number", "ssn_last_four", "card_number", "transfer_amount", "recipient_account"]
+            }
+        };
+
+        let session = null;
+        let vars = [];
+        let assignment = {};
+        let domain = '';
+        let totalCombos = 0;
+        let scenarioCount = 0;
+        let currentSample = 'clinic';
+
+        const input = document.getElementById('input');
+        const output = document.getElementById('output');
+        const variables = document.getElementById('variables');
+        const meta = document.getElementById('meta');
+        const btn = document.getElementById('btn');
+        const clearBtn = document.getElementById('clear');
+        const count = document.getElementById('count');
+        const samplesDiv = document.getElementById('samples');
+
+        // Render sample buttons
+        function renderSamples() {
+            samplesDiv.innerHTML = Object.keys(SAMPLES).map(key =>
+                `<button class="sample ${key === currentSample ? 'active' : ''}" data-key="${key}">${key}</button>`
+            ).join('');
+
+            samplesDiv.querySelectorAll('.sample').forEach(btn => {
+                btn.onclick = () => {
+                    currentSample = btn.dataset.key;
+                    input.value = JSON.stringify(SAMPLES[currentSample], null, 2);
+                    reset();
+                    renderSamples();
+                };
+            });
+        }
+
+        function rainbow(i, n) {
+            if (n <= 1) return '#3b82f6';
+            const colors = [[59,130,246],[6,182,212],[16,185,129],[234,179,8],[249,115,22],[239,68,68]];
+            const t = i / (n - 1);
+            const seg = t * (colors.length - 1);
+            const idx = Math.floor(seg);
+            const f = seg - idx;
+            if (idx >= colors.length - 1) return `rgb(${colors[colors.length-1].join(',')})`;
+            const [r1,g1,b1] = colors[idx];
+            const [r2,g2,b2] = colors[idx + 1];
+            return `rgb(${Math.round(r1+(r2-r1)*f)},${Math.round(g1+(g2-g1)*f)},${Math.round(b1+(b2-b1)*f)})`;
+        }
+
+        function renderMeta() {
+            if (!domain) {
+                meta.innerHTML = '';
+                return;
+            }
+            meta.innerHTML = `
+                <span><strong>domain:</strong> ${domain}</span>
+                <span><strong>variables:</strong> ${vars.length}</span>
+                <span><strong>combinations:</strong> ${totalCombos.toLocaleString()}</span>
+            `;
+        }
+
+        function renderVars() {
+            if (vars.length === 0) {
+                variables.innerHTML = '<span style="opacity:0.3;font-size:11px">variables appear after first generate</span>';
+                return;
+            }
+
+            variables.innerHTML = vars.map(v => `
+                <div class="var">
+                    <span class="var-name">${v.name}<span class="var-category">${v.category}</span></span>
+                    <div class="states">${v.states.map((s, i) => {
+                        const on = String(assignment[v.name]) === s;
+                        const isEdge = v.edge_cases && v.edge_cases.includes(s);
+                        const bg = on ? `background:${rainbow(i, v.states.length)}` : '';
+                        return `<span class="state ${on ? 'on' : ''} ${isEdge ? 'edge' : ''}" style="${bg}">${s}</span>`;
+                    }).join('')}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderOutput(scenarios) {
+            output.innerHTML = scenarios.map((s, i) => {
+                const hasError = s._error;
+                const clean = {...s};
+                delete clean._variable_assignment;
+                const error = clean._error;
+                delete clean._error;
+
+                return `
+                    <div class="scenario">
+                        <div class="scenario-header">#${scenarios.length - i}: ${s.scenarioName || 'Untitled'}</div>
+                        <pre>${JSON.stringify(clean, null, 2)}</pre>
+                        ${hasError ? `<div class="scenario-error">LLM Error: ${error}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateCount() {
+            count.textContent = scenarioCount > 0 ? `${scenarioCount} scenario${scenarioCount !== 1 ? 's' : ''}` : '';
+        }
+
+        function reset() {
+            session = null;
+            vars = [];
+            assignment = {};
+            domain = '';
+            totalCombos = 0;
+            scenarioCount = 0;
+            output.innerHTML = '';
+            renderMeta();
+            renderVars();
+            updateCount();
+            btn.textContent = 'generate';
+            btn.disabled = false;
+        }
+
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API}/health`);
+                const data = await res.json();
+                if (!data.api_key_configured) {
+                    alert('Warning: XAI_API_KEY not configured. Scenarios will be generic.\n\nSet XAI_API_KEY in .env file and restart server.');
+                }
+            } catch (e) {
+                alert('Server not running. Start with: python server.py');
+                throw e;
+            }
+        }
+
+        async function init() {
+            await checkHealth();
+
+            let config;
+            try { config = JSON.parse(input.value); }
+            catch { config = { description: input.value }; }
+
+            const res = await fetch(`${API}/init`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config, max_scenarios: 100 })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'init failed');
+            }
+
+            const data = await res.json();
+            session = data.session_id;
+            vars = data.variables;
+            domain = data.domain;
+            totalCombos = data.total_combinations;
+            assignment = {};
+            scenarioCount = 0;
+            renderMeta();
+            renderVars();
+        }
+
+        async function generate() {
+            btn.disabled = true;
+            btn.textContent = '...';
+
+            try {
+                if (!session) await init();
+
+                const res = await fetch(`${API}/generate/${session}`, { method: 'POST' });
+                const data = await res.json();
+
+                if (data.complete) {
+                    btn.textContent = 'done';
+                    return;
+                }
+
+                assignment = data.scenario._variable_assignment || {};
+                scenarioCount = data.scenario_count;
+                renderVars();
+                updateCount();
+
+                const existing = output.querySelectorAll('.scenario');
+                const scenarios = [data.scenario, ...Array.from(existing).map(el => {
+                    try { return JSON.parse(el.querySelector('pre').textContent); } catch { return null; }
+                }).filter(Boolean)];
+                renderOutput(scenarios);
+
+                btn.disabled = false;
+                btn.textContent = 'generate';
+            } catch (e) {
+                console.error(e);
+                alert(e.message);
+                btn.disabled = false;
+                btn.textContent = 'generate';
+            }
+        }
+
+        btn.onclick = generate;
+        clearBtn.onclick = reset;
+        document.onkeydown = e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') generate(); };
+
+        // Initialize
+        renderSamples();
+        input.value = JSON.stringify(SAMPLES[currentSample], null, 2);
+        renderVars();
+    </script>
+</body>
+</html>
